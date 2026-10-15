@@ -1,6 +1,8 @@
+# 编译产物
 *.obj
 *.res
 *.exe
 *.pdb
 *.ilk
 .vs/
+*.manifest

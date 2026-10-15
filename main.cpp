@@ -1,13 +1,17 @@
 	#include "resource.h"
-	#define UNICODE
-	#define _UNICODE
 	#include <windows.h>
+	#include <commctrl.h>
 	#include <string>
 	#include <thread>
 
 	#pragma comment(lib, "user32.lib")
 	#pragma comment(lib, "gdi32.lib")
 	#pragma comment(lib, "shell32.lib")
+	#pragma comment(lib, "comctl32.lib")
+
+	#pragma comment(linker, "\"/manifestdependency:type='win32' \
+	name='Microsoft.Windows.Common-Controls' version='6.0.0.0' \
+	processorArchitecture='*' publicKeyToken='6595b64144ccf1df' language='*'\"")
 
 	#define ID_EDIT_TEXT          1001
 	#define ID_TRAY_SHOW          2003
@@ -15,9 +19,13 @@
 	#define ID_EDIT_SET_HOTKEY    2004
 	#define ID_VIEW_SHOW_HOTKEY   2005
 	#define IDT_HIDE_STATUS       100
+	#define IDT_WATCH_CARET       101
 	#define WM_APP_TRAY           (WM_APP + 1)
 	#define WM_APP_DO_TYPE        (WM_APP + 2)
 	#define HOTKEY_ID             1
+
+	// 状态栏分区
+	#define SB_PART_COUNT  4
 
 	static HINSTANCE g_hInst   = NULL;
 	static HWND      g_hWnd    = NULL;
@@ -60,17 +68,28 @@
 		return s;
 	}
 
-	static void UpdateStatusText(const std::wstring& txt) {
-		SetWindowTextW(g_hStatus, txt.c_str());
+	// ---------- 状态栏（仿记事本）----------
+	static void UpdateNotepadStatus() {
+		DWORD selStart = 0, selEnd = 0;
+		SendMessageW(g_hEdit, EM_GETSEL, (WPARAM)&selStart, (LPARAM)&selEnd);
+		int line = (int)SendMessageW(g_hEdit, EM_LINEFROMCHAR, selStart, 0) + 1;
+		int lineStart = (int)SendMessageW(g_hEdit, EM_LINEINDEX, line - 1, 0);
+		int col = (int)selStart - lineStart + 1;
+
+		wchar_t buf[128];
+		wsprintfW(buf, L"第 %d 行，第 %d 列", line, col);
+		SendMessageW(g_hStatus, SB_SETTEXTW, 0, (LPARAM)buf);
+		SendMessageW(g_hStatus, SB_SETTEXTW, 1, (LPARAM)L"100%");
+		SendMessageW(g_hStatus, SB_SETTEXTW, 2, (LPARAM)L"Windows (CRLF)");
+		SendMessageW(g_hStatus, SB_SETTEXTW, 3, (LPARAM)L"UTF-8");
 	}
 
 	static void ShowStatusMomentarily(const std::wstring& txt) {
-		ShowWindow(g_hStatus, SW_SHOW);
-		UpdateStatusText(txt);
+		SendMessageW(g_hStatus, SB_SETTEXTW, 0, (LPARAM)txt.c_str());
 	}
 
 	static void HideStatus() {
-		ShowWindow(g_hStatus, SW_HIDE);
+		UpdateNotepadStatus();
 	}
 
 	// ---------- 热键注册 ----------
@@ -136,17 +155,69 @@
 		}
 	}
 
-	// ---------- 菜单 ----------
+	// ---------- 菜单（仿记事本）----------
 	static void BuildMenu() {
 		HMENU root = CreateMenu();
 		HMENU mFile = CreatePopupMenu();
 		HMENU mEdit = CreatePopupMenu();
+		HMENU mFormat = CreatePopupMenu();
 		HMENU mView = CreatePopupMenu();
-		AppendMenuW(mEdit, MF_STRING, ID_EDIT_SET_HOTKEY,  L"设置快捷键(&S)");
+		HMENU mHelp = CreatePopupMenu();
+
+		// 文件(F)
+		AppendMenuW(mFile, MF_STRING, 0, L"新建(&N)\tCtrl+N");
+		AppendMenuW(mFile, MF_STRING, 0, L"新建窗口(&W)\tCtrl+Shift+N");
+		AppendMenuW(mFile, MF_STRING, 0, L"打开(&O)...\tCtrl+O");
+		AppendMenuW(mFile, MF_STRING, 0, L"保存(&S)\tCtrl+S");
+		AppendMenuW(mFile, MF_STRING, 0, L"另存为(&A)...\tCtrl+Shift+S");
+		AppendMenuW(mFile, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mFile, MF_STRING, 0, L"页面设置(&U)...");
+		AppendMenuW(mFile, MF_STRING, 0, L"打印(&P)...\tCtrl+P");
+		AppendMenuW(mFile, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mFile, MF_STRING, ID_TRAY_EXIT, L"退出(&X)");
+
+		// 编辑(E)
+		AppendMenuW(mEdit, MF_STRING, 0, L"撤销(&U)\tCtrl+Z");
+		AppendMenuW(mEdit, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mEdit, MF_STRING, 0, L"剪切(&T)\tCtrl+X");
+		AppendMenuW(mEdit, MF_STRING, 0, L"复制(&C)\tCtrl+C");
+		AppendMenuW(mEdit, MF_STRING, 0, L"粘贴(&P)\tCtrl+V");
+		AppendMenuW(mEdit, MF_STRING, 0, L"删除(&L)\tDel");
+		AppendMenuW(mEdit, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mEdit, MF_STRING, 0, L"使用 Bing 搜索(&S)...\tCtrl+E");
+		AppendMenuW(mEdit, MF_STRING, 0, L"查找(&F)...\tCtrl+F");
+		AppendMenuW(mEdit, MF_STRING, 0, L"查找下一个(&N)\tF3");
+		AppendMenuW(mEdit, MF_STRING, 0, L"查找上一个(&V)\tShift+F3");
+		AppendMenuW(mEdit, MF_STRING, 0, L"替换(&R)...\tCtrl+H");
+		AppendMenuW(mEdit, MF_STRING, 0, L"转到(&G)...\tCtrl+G");
+		AppendMenuW(mEdit, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mEdit, MF_STRING, 0, L"全选(&A)\tCtrl+A");
+		AppendMenuW(mEdit, MF_STRING, 0, L"时间/日期(&D)\tF5");
+		// 自定义功能
+		AppendMenuW(mEdit, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mEdit, MF_STRING, ID_EDIT_SET_HOTKEY, L"设置触发快捷键(&S)...");
+
+		// 格式(O)
+		AppendMenuW(mFormat, MF_STRING | MF_CHECKED, 0, L"自动换行(&W)");
+		AppendMenuW(mFormat, MF_STRING, 0, L"字体(&F)...");
+
+		// 查看(V)
+		AppendMenuW(mView, MF_STRING, 0, L"缩放(&Z)");
+		AppendMenuW(mView, MF_STRING, 0, L"状态栏(&S)");
+		AppendMenuW(mView, MF_SEPARATOR, 0, NULL);
 		AppendMenuW(mView, MF_STRING, ID_VIEW_SHOW_HOTKEY, L"当前快捷键(&C)");
-		AppendMenuW(root, MF_POPUP, (UINT_PTR)mFile, L"文件(&F)");
-		AppendMenuW(root, MF_POPUP, (UINT_PTR)mEdit,  L"编辑(&E)");
-		AppendMenuW(root, MF_POPUP, (UINT_PTR)mView,  L"查看(&V)");
+
+		// 帮助(H)
+		AppendMenuW(mHelp, MF_STRING, 0, L"查看帮助(&H)");
+		AppendMenuW(mHelp, MF_STRING, 0, L"发送反馈(&F)");
+		AppendMenuW(mHelp, MF_SEPARATOR, 0, NULL);
+		AppendMenuW(mHelp, MF_STRING, 0, L"关于记事本(&A)");
+
+		AppendMenuW(root, MF_POPUP, (UINT_PTR)mFile,   L"文件(&F)");
+		AppendMenuW(root, MF_POPUP, (UINT_PTR)mEdit,   L"编辑(&E)");
+		AppendMenuW(root, MF_POPUP, (UINT_PTR)mFormat, L"格式(&O)");
+		AppendMenuW(root, MF_POPUP, (UINT_PTR)mView,   L"查看(&V)");
+		AppendMenuW(root, MF_POPUP, (UINT_PTR)mHelp,   L"帮助(&H)");
 		SetMenu(g_hWnd, root);
 	}
 
@@ -156,33 +227,70 @@
 		if (msg == WM_CREATE) {
 			g_hWnd = hWnd;
 			BuildMenu();
+
+			// 编辑框：无边框，纯白背景
 			g_hEdit = CreateWindowExW(
-				WS_EX_CLIENTEDGE, L"EDIT", L"",
+				0, L"EDIT", L"",
 				WS_CHILD | WS_VISIBLE | WS_VSCROLL |
-				ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN,
+				ES_MULTILINE | ES_AUTOVSCROLL | ES_WANTRETURN | ES_NOHIDESEL,
 				0, 0, 0, 0, hWnd, (HMENU)(UINT_PTR)ID_EDIT_TEXT, g_hInst, NULL);
+
+			// 状态栏
 			g_hStatus = CreateWindowExW(
-				0, L"STATIC", L"", WS_CHILD | SS_LEFT | SS_CENTERIMAGE,
-				0, 0, 0, 24, hWnd, NULL, g_hInst, NULL);
+				0, STATUSCLASSNAMEW, L"",
+				WS_CHILD | WS_VISIBLE | SBARS_SIZEGRIP,
+				0, 0, 0, 0, hWnd, NULL, g_hInst, NULL);
+
+			// 状态栏分区（先给个默认，WM_SIZE 里会重算）
+			int parts[SB_PART_COUNT] = { 200, 280, 380, -1 };
+			SendMessageW(g_hStatus, SB_SETPARTS, SB_PART_COUNT, (LPARAM)parts);
+
 			HFONT hf = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
 			SendMessageW(g_hEdit,   WM_SETFONT, (WPARAM)hf, TRUE);
 			SendMessageW(g_hStatus, WM_SETFONT, (WPARAM)hf, TRUE);
-			HideStatus();
+
+			// 编辑框左右留 8px 内边距
+			SendMessageW(g_hEdit, EM_SETMARGINS, EC_LEFTMARGIN | EC_RIGHTMARGIN,
+				MAKELPARAM(8, 8));
+
 			AddTrayIcon();
 			ApplyHotkey();
+			UpdateNotepadStatus();
+
+			// 轮询光标位置，替代 EDIT 不支持的 EN_SELCHANGE
+			SetTimer(hWnd, IDT_WATCH_CARET, 200, NULL);
 			return 0;
 		}
 
 		if (msg == WM_SIZE) {
 			RECT rc; GetClientRect(hWnd, &rc);
-			int barH = 24;
-			MoveWindow(g_hEdit, 0, 0, rc.right, rc.bottom - barH, TRUE);
-			MoveWindow(g_hStatus, 0, rc.bottom - barH, rc.right, barH, TRUE);
+
+			SendMessageW(g_hStatus, WM_SIZE, 0, 0);
+			RECT rcStatus; GetWindowRect(g_hStatus, &rcStatus);
+			int statusH = rcStatus.bottom - rcStatus.top;
+
+			int editH = rc.bottom - statusH;
+			if (editH < 0) editH = 0;
+
+			MoveWindow(g_hEdit, 0, 0, rc.right, editH, TRUE);
+			MoveWindow(g_hStatus, 0, editH, rc.right, statusH, TRUE);
+
+			int w = rc.right;
+			int parts[SB_PART_COUNT] = { w - 320, w - 220, w - 120, -1 };
+			SendMessageW(g_hStatus, SB_SETPARTS, SB_PART_COUNT, (LPARAM)parts);
 			return 0;
 		}
 
 		if (msg == WM_COMMAND) {
-			switch (LOWORD(wParam)) {
+			WORD id = LOWORD(wParam);
+			WORD code = HIWORD(wParam);
+			if (id == ID_EDIT_TEXT &&
+				(code == EN_CHANGE || code == EN_UPDATE ||
+				 code == EN_SETFOCUS || code == EN_KILLFOCUS)) {
+				UpdateNotepadStatus();
+			}
+
+			switch (id) {
 			case ID_EDIT_SET_HOTKEY:
 				g_bCapturing = true;
 				UnregisterHotKey(g_hWnd, HOTKEY_ID);
@@ -209,6 +317,17 @@
 		if (msg == WM_TIMER && wParam == IDT_HIDE_STATUS) {
 			KillTimer(g_hWnd, IDT_HIDE_STATUS);
 			if (!g_bCapturing) HideStatus();
+			return 0;
+		}
+
+		if (msg == WM_TIMER && wParam == IDT_WATCH_CARET) {
+			static DWORD lastSel = 0xFFFFFFFF;
+			DWORD selStart = 0, selEnd = 0;
+			SendMessageW(g_hEdit, EM_GETSEL, (WPARAM)&selStart, (LPARAM)&selEnd);
+			if (selStart != lastSel) {
+				lastSel = selStart;
+				UpdateNotepadStatus();
+			}
 			return 0;
 		}
 
@@ -271,10 +390,25 @@
 		}
 
 		if (msg == WM_DESTROY) {
+			KillTimer(g_hWnd, IDT_WATCH_CARET);
 			UnregisterHotKey(g_hWnd, HOTKEY_ID);
 			RemoveTrayIcon();
 			PostQuitMessage(0);
 			return 0;
+		}
+
+		// 编辑框背景刷白
+		if (msg == WM_CTLCOLOREDIT) {
+			HDC hdc = (HDC)wParam;
+			SetBkColor(hdc, RGB(255, 255, 255));
+			SetTextColor(hdc, RGB(0, 0, 0));
+			static HBRUSH hWhite = CreateSolidBrush(RGB(255, 255, 255));
+			return (LRESULT)hWhite;
+		}
+		if (msg == WM_CTLCOLORSTATIC) {
+			HDC hdc = (HDC)wParam;
+			SetBkColor(hdc, GetSysColor(COLOR_BTNFACE));
+			return (LRESULT)GetSysColorBrush(COLOR_BTNFACE);
 		}
 
 		return DefWindowProcW(hWnd, msg, wParam, lParam);
@@ -283,6 +417,12 @@
 	// ---------- 入口 ----------
 	int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, LPWSTR, int nCmdShow) {
 		g_hInst = hInst;
+
+		// 初始化 Common Controls（状态栏需要）
+		INITCOMMONCONTROLSEX icc = {};
+		icc.dwSize = sizeof(icc);
+		icc.dwICC  = ICC_BAR_CLASSES;
+		InitCommonControlsEx(&icc);
 
 		HANDLE hMutex = CreateMutexW(NULL, TRUE, L"TypingSimulator_SingleInstance_v2");
 		if (GetLastError() == ERROR_ALREADY_EXISTS) {
@@ -299,7 +439,7 @@
 		wc.lpfnWndProc   = WndProc;
 		wc.hInstance     = hInst;
 		wc.hCursor       = LoadCursorW(NULL, IDC_ARROW);
-		wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+		wc.hbrBackground = (HBRUSH)GetStockObject(WHITE_BRUSH);
 		wc.lpszClassName = L"TypingSimulatorClassV2";
 		wc.hIcon         = hIcon;
 		wc.hIconSm       = hIcon;
